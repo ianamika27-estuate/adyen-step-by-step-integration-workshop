@@ -26,9 +26,14 @@ replay_pid*
 # Gradle
 .gradle
 **/build/
+**/gradle/
+
 
 # idea
 .idea
 
 # Mac
 .DS_Store
+
+#application.properties
+/application.properties
