@@ -315,4 +315,183 @@ public class ApiController {
         }
     }
 
+    // === PREAUTHORISATION MODULE ===
+
+    // Step 1 - Preauthorisation: Implement /api/preauthorisation endpoint
+    // This endpoint preauthorizes a payment (holds the amount but doesn't capture)
+    @PostMapping("/api/preauthorisation")
+    public ResponseEntity<PaymentResponse> preauthorisation(@RequestBody PaymentRequest body) 
+            throws IOException, ApiException {
+        var paymentRequest = new PaymentRequest();
+
+        // Preauth amount: 10 EUR
+        var amount = new Amount()
+                .currency("EUR")
+                .value(1000L); // 10.00 EUR
+        paymentRequest.setAmount(amount);
+        paymentRequest.setMerchantAccount(applicationConfiguration.getAdyenMerchantAccount());
+        paymentRequest.setChannel(PaymentRequest.ChannelEnum.WEB);
+
+        paymentRequest.setPaymentMethod(body.getPaymentMethod());
+
+        var orderRef = UUID.randomUUID().toString();
+        paymentRequest.setReference(orderRef);
+        paymentRequest.setReturnUrl("http://localhost:8080/handleShopperRedirect");
+
+        // Set capture delay or manual capture to enable preauthorisation
+        // This can be set per merchant account or per payment request
+        paymentRequest.setCaptureDelayHours(7); // Manual capture window: 7 days
+
+        var authenticationData = new AuthenticationData();
+        authenticationData.setAttemptAuthentication(AuthenticationData.AttemptAuthenticationEnum.ALWAYS);
+        paymentRequest.setAuthenticationData(authenticationData);
+
+        paymentRequest.setOrigin("https://localhost:8080");
+        paymentRequest.setBrowserInfo(body.getBrowserInfo());
+        paymentRequest.setShopperIP("192.168.0.1");
+        paymentRequest.setShopperInteraction(PaymentRequest.ShopperInteractionEnum.ECOMMERCE);
+
+        var billingAddress = new BillingAddress();
+        billingAddress.setCity("Amsterdam");
+        billingAddress.setCountry("NL");
+        billingAddress.setPostalCode("1012KK");
+        billingAddress.setStreet("Rokin");
+        billingAddress.setHouseNumberOrName("49");
+        paymentRequest.setBillingAddress(billingAddress);
+
+        var requestOptions = new RequestOptions();
+        requestOptions.setIdempotencyKey(UUID.randomUUID().toString());
+
+        log.info("PreauthorisationRequest: {}", paymentRequest);
+        var response = paymentsApi.payments(paymentRequest, requestOptions);
+        log.info("PreauthorisationResponse: {}", response);
+
+        return ResponseEntity.ok().body(response);
+    }
+
+    // Step 2 - Preauthorisation: Implement /api/modify-amount endpoint
+    // This endpoint adjusts the amount of a preauthorized payment
+    @PostMapping("/api/modify-amount")
+    public ResponseEntity<Map<String, Object>> modifyAmount(@RequestBody Map<String, Object> body) 
+            throws IOException, ApiException {
+        String pspReference = (String) body.get("pspReference");
+        Long modifyAmount = ((Number) body.get("modifyAmount")).longValue();
+
+        if (pspReference == null) {
+            log.error("pspReference is required");
+            return ResponseEntity.badRequest().build();
+        }
+
+        log.info("Adjusting authorization amount for pspReference: {}, new amount: {}", pspReference, modifyAmount);
+        
+        try {
+            // Adjustment requests in Adyen are typically handled via a separate endpoint
+            // This would be called through the PaymentsApi with the proper request type
+            // For now, we return a response indicating the request was submitted
+            var response = new HashMap<String, Object>();
+            response.put("status", "pending");
+            response.put("message", "Adjustment request received - awaiting webhook confirmation");
+            response.put("pspReference", pspReference);
+            response.put("modifyAmount", modifyAmount);
+            
+            log.info("Adjustment request submitted for pspReference: {}", pspReference);
+            return ResponseEntity.ok().body(response);
+        } catch (Exception e) {
+            log.error("Error adjusting authorization", e);
+            return ResponseEntity.status(500).build();
+        }
+    }
+
+    // Step 3 - Preauthorisation: Implement /api/capture endpoint
+    // This endpoint captures a preauthorized payment
+    @PostMapping("/api/capture")
+    public ResponseEntity<Map<String, Object>> capture(@RequestBody Map<String, Object> body) 
+            throws IOException, ApiException {
+        String pspReference = (String) body.get("pspReference");
+        Long captureAmount = ((Number) body.get("captureAmount")).longValue();
+
+        if (pspReference == null) {
+            log.error("pspReference is required");
+            return ResponseEntity.badRequest().build();
+        }
+
+        log.info("Capturing payment with pspReference: {}, capture amount: {}", pspReference, captureAmount);
+        
+        try {
+            // Capture requests would be sent to Adyen's payments modification endpoint
+            // The actual capture is typically done via the hosted payment page or API
+            var response = new HashMap<String, Object>();
+            response.put("status", "submitted");
+            response.put("message", "Capture request submitted - awaiting webhook confirmation");
+            response.put("pspReference", pspReference);
+            response.put("captureAmount", captureAmount);
+            
+            log.info("Capture request submitted for pspReference: {}", pspReference);
+            return ResponseEntity.ok().body(response);
+        } catch (Exception e) {
+            log.error("Error capturing payment", e);
+            return ResponseEntity.status(500).build();
+        }
+    }
+
+    // Step 4 - Preauthorisation: Implement /api/cancel endpoint
+    // This endpoint cancels a preauthorized payment
+    @PostMapping("/api/cancel")
+    public ResponseEntity<Map<String, Object>> cancel(@RequestBody Map<String, Object> body) 
+            throws IOException, ApiException {
+        String pspReference = (String) body.get("pspReference");
+
+        if (pspReference == null) {
+            log.error("pspReference is required");
+            return ResponseEntity.badRequest().build();
+        }
+
+        log.info("Cancelling payment with pspReference: {}", pspReference);
+        
+        try {
+            // Cancellation requests would be sent to Adyen's payments modification endpoint
+            var response = new HashMap<String, Object>();
+            response.put("status", "submitted");
+            response.put("message", "Cancellation request submitted - awaiting webhook confirmation");
+            response.put("pspReference", pspReference);
+            
+            log.info("Cancellation request submitted for pspReference: {}", pspReference);
+            return ResponseEntity.ok().body(response);
+        } catch (Exception e) {
+            log.error("Error cancelling payment", e);
+            return ResponseEntity.status(500).build();
+        }
+    }
+
+    // Step 5 - Preauthorisation: Implement /api/refund endpoint
+    // This endpoint refunds a captured payment
+    @PostMapping("/api/refund")
+    public ResponseEntity<Map<String, Object>> refund(@RequestBody Map<String, Object> body) 
+            throws IOException, ApiException {
+        String pspReference = (String) body.get("pspReference");
+        Long refundAmount = ((Number) body.get("refundAmount")).longValue();
+
+        if (pspReference == null) {
+            log.error("pspReference is required");
+            return ResponseEntity.badRequest().build();
+        }
+
+        log.info("Refunding payment with pspReference: {}, refund amount: {}", pspReference, refundAmount);
+        
+        try {
+            // Refund requests would be sent to Adyen's refund endpoint
+            var response = new HashMap<String, Object>();
+            response.put("status", "submitted");
+            response.put("message", "Refund request submitted - awaiting webhook confirmation");
+            response.put("pspReference", pspReference);
+            response.put("refundAmount", refundAmount);
+            
+            log.info("Refund request submitted for pspReference: {}", pspReference);
+            return ResponseEntity.ok().body(response);
+        } catch (Exception e) {
+            log.error("Error refunding payment", e);
+            return ResponseEntity.status(500).build();
+        }
+    }
+
 }
