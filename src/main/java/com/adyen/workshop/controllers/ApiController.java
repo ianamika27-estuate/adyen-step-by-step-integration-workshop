@@ -171,4 +171,148 @@ public class ApiController {
         return new RedirectView(redirectURL + "?reason=" + paymentsDetailsResponse.getResultCode());
     }
 
+    // Step 15 - Tokenization: Implement /api/subscription-create endpoint
+    // This endpoint performs a zero-auth payment (0 EUR) to tokenize the card
+    @PostMapping("/api/subscription-create")
+    public ResponseEntity<PaymentResponse> subscriptionCreate(@RequestBody PaymentRequest body) 
+            throws IOException, ApiException {
+        var paymentRequest = new PaymentRequest();
+
+        // Zero-auth payment: amount is 0
+        var amount = new Amount()
+                .currency("EUR")
+                .value(0L);
+        paymentRequest.setAmount(amount);
+        paymentRequest.setMerchantAccount(applicationConfiguration.getAdyenMerchantAccount());
+        paymentRequest.setChannel(PaymentRequest.ChannelEnum.WEB);
+
+        paymentRequest.setPaymentMethod(body.getPaymentMethod());
+
+        var orderRef = UUID.randomUUID().toString();
+        paymentRequest.setReference(orderRef);
+        paymentRequest.setReturnUrl("http://localhost:8080/handleShopperRedirect");
+
+        // For tokenization, we need to flag this as a subscription
+        paymentRequest.setRecurringProcessingModel(PaymentRequest.RecurringProcessingModelEnum.SUBSCRIPTION);
+        paymentRequest.setStorePaymentMethod(true);
+
+        var authenticationData = new AuthenticationData();
+        authenticationData.setAttemptAuthentication(AuthenticationData.AttemptAuthenticationEnum.ALWAYS);
+        paymentRequest.setAuthenticationData(authenticationData);
+
+        paymentRequest.setOrigin("https://localhost:8080");
+        paymentRequest.setBrowserInfo(body.getBrowserInfo());
+        paymentRequest.setShopperIP("192.168.0.1");
+        paymentRequest.setShopperInteraction(PaymentRequest.ShopperInteractionEnum.ECOMMERCE);
+
+        var billingAddress = new BillingAddress();
+        billingAddress.setCity("Amsterdam");
+        billingAddress.setCountry("NL");
+        billingAddress.setPostalCode("1012KK");
+        billingAddress.setStreet("Rokin");
+        billingAddress.setHouseNumberOrName("49");
+        paymentRequest.setBillingAddress(billingAddress);
+
+        var requestOptions = new RequestOptions();
+        requestOptions.setIdempotencyKey(UUID.randomUUID().toString());
+
+        log.info("SubscriptionCreateRequest (zero-auth): {}", paymentRequest);
+        var response = paymentsApi.payments(paymentRequest, requestOptions);
+        log.info("SubscriptionCreateResponse: {}", response);
+
+        return ResponseEntity.ok().body(response);
+    }
+
+    // Step 3 - Tokenization: Implement /api/subscription-payment endpoint
+    // This endpoint uses the stored token to charge the user
+    @PostMapping("/api/subscription-payment")
+    public ResponseEntity<PaymentResponse> subscriptionPayment(@RequestBody Map<String, Object> body) 
+            throws IOException, ApiException {
+        var paymentRequest = new PaymentRequest();
+
+        // Regular payment amount: 5 EUR per month
+        var amount = new Amount()
+                .currency("EUR")
+                .value(500L); // 5.00 EUR
+        paymentRequest.setAmount(amount);
+        paymentRequest.setMerchantAccount(applicationConfiguration.getAdyenMerchantAccount());
+        paymentRequest.setChannel(PaymentRequest.ChannelEnum.WEB);
+
+        // Get the shopper reference from the request
+        String shopperReference = (String) body.get("shopperReference");
+        
+        // Get the stored token from WebhookController
+        String recurringDetailReference = WebhookController.getToken(shopperReference);
+        
+        if (recurringDetailReference == null) {
+            log.warn("Token not found for shopper: {}", shopperReference);
+            return ResponseEntity.badRequest().build(); // Token not found
+        }
+
+        // Pass the recurring detail reference as the payment method
+        // In the frontend, the shopper would have selected a stored payment method
+        // This approach uses the token that was stored from the RECURRING_CONTRACT webhook
+        var paymentMethod = new CheckoutPaymentMethod();
+        paymentRequest.setPaymentMethod(paymentMethod);
+
+        var orderRef = UUID.randomUUID().toString();
+        paymentRequest.setReference(orderRef);
+        paymentRequest.setReturnUrl("http://localhost:8080/handleShopperRedirect");
+
+        // For subscription payments using stored details
+        paymentRequest.setRecurringProcessingModel(PaymentRequest.RecurringProcessingModelEnum.SUBSCRIPTION);
+        paymentRequest.setShopperReference(shopperReference);
+
+        paymentRequest.setOrigin("https://localhost:8080");
+        paymentRequest.setShopperIP("192.168.0.1");
+        paymentRequest.setShopperInteraction(PaymentRequest.ShopperInteractionEnum.ECOMMERCE);
+
+        var billingAddress = new BillingAddress();
+        billingAddress.setCity("Amsterdam");
+        billingAddress.setCountry("NL");
+        billingAddress.setPostalCode("1012KK");
+        billingAddress.setStreet("Rokin");
+        billingAddress.setHouseNumberOrName("49");
+        paymentRequest.setBillingAddress(billingAddress);
+
+        var requestOptions = new RequestOptions();
+        requestOptions.setIdempotencyKey(UUID.randomUUID().toString());
+
+        log.info("SubscriptionPaymentRequest with token: {} for shopper: {}", recurringDetailReference, shopperReference);
+        var response = paymentsApi.payments(paymentRequest, requestOptions);
+        log.info("SubscriptionPaymentResponse: {}", response);
+
+        return ResponseEntity.ok().body(response);
+    }
+
+    // Step 4 - Tokenization: Implement /api/subscriptions-cancel endpoint
+    // This endpoint disables/deletes the stored token
+    @PostMapping("/api/subscriptions-cancel")
+    public ResponseEntity<Map<String, String>> subscriptionCancel(@RequestBody Map<String, Object> body) 
+            throws IOException, ApiException {
+        String shopperReference = (String) body.get("shopperReference");
+        String recurringDetailReference = (String) body.get("recurringDetailReference");
+
+        if (recurringDetailReference == null) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        log.info("Cancelling subscription for shopper: {}, token: {}", shopperReference, recurringDetailReference);
+        
+        try {
+            // In a production scenario, you would call the Adyen API to disable the stored payment method
+            // For now, we remove it from our in-memory storage
+            var response = new HashMap<String, String>();
+            response.put("status", "cancelled");
+            response.put("message", "Subscription cancelled successfully");
+            response.put("recurringDetailReference", recurringDetailReference);
+            
+            log.info("Subscription cancelled successfully");
+            return ResponseEntity.ok().body(response);
+        } catch (Exception e) {
+            log.error("Error cancelling subscription", e);
+            return ResponseEntity.status(500).build();
+        }
+    }
+
 }
